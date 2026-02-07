@@ -92,8 +92,8 @@ async def gen_thumb(videoid: str) -> str:
     
     draw = ImageDraw.Draw(bg)
     try:
-        title_font = ImageFont.truetype("SaregamaMusic/assets/font.ttf", 32)
-        regular_font = ImageFont.truetype("SaregamaMusic/assets/font2.ttf", 18)
+        title_font = ImageFont.truetype("ShrutixMusic/assets/font.ttf", 32)
+        regular_font = ImageFont.truetype("ShrutixMusic/assets/font2.ttf", 18)
     except OSError:
         title_font = regular_font = ImageFont.load_default()
 
@@ -115,7 +115,7 @@ async def gen_thumb(videoid: str) -> str:
     draw.text((BAR_X + BAR_TOTAL_LEN - (90 if is_live else 60), BAR_Y + 15), end_text, fill="red" if is_live else "black", font=regular_font)
 
     
-    icons_path = "SaregamaMusic/assets/play_icons.png"
+    icons_path = "ShrutixMusic/assets/play_icons.png"
     if os.path.isfile(icons_path):
         ic = Image.open(icons_path).resize((ICONS_W, ICONS_H)).convert("RGBA")
         r, g, b, a = ic.split()
@@ -123,7 +123,7 @@ async def gen_thumb(videoid: str) -> str:
         bg.paste(black_ic, (ICONS_X, ICONS_Y), black_ic)
 
     
-    font = ImageFont.truetype("SaregamaMusic/assets/font.ttf", 28)  
+    font = ImageFont.truetype("ShrutixMusic/assets/font.ttf", 28)  
     text = " "
     text_size = draw.textsize(text, font=font)
     draw.text((1280 - text_size[0] - 10, 10), text, fill="yellow", font=font)
@@ -135,5 +135,6 @@ async def gen_thumb(videoid: str) -> str:
     bg.save(cache_path)
     return cache_path
     
+
 
 
