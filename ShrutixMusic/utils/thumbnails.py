@@ -1,121 +1,168 @@
+
 import os
 import re
-
-import aiofiles
+import random
 import aiohttp
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
-from unidecode import unidecode
-from py_yt import VideosSearch
+import aiofiles
+import traceback
 
-from ShrutixMusic import nand
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from py_yt import VideosSearch
 from config import YOUTUBE_IMG_URL
 
 
 def changeImageSize(maxWidth, maxHeight, image):
-    widthRatio = maxWidth / image.size[0]
-    heightRatio = maxHeight / image.size[1]
-    newWidth = int(widthRatio * image.size[0])
-    newHeight = int(heightRatio * image.size[1])
-    newImage = image.resize((newWidth, newHeight))
-    return newImage
+    ratio = min(maxWidth / image.size[0], maxHeight / image.size[1])
+    newSize = (int(image.size[0] * ratio), int(image.size[1] * ratio))
+    return image.resize(newSize, Image.ANTIALIAS)
 
 
-def clear(text):
-    list = text.split(" ")
-    title = ""
-    for i in list:
-        if len(title) + len(i) < 60:
-            title += " " + i
-    return title.strip()
+def truncate(text, max_chars=50):
+    words = text.split()
+    text1, text2 = "", ""
+    for word in words:
+        if len(text1 + " " + word) <= max_chars and not text2:
+            text1 += " " + word
+        else:
+            text2 += " " + word
+    return [text1.strip(), text2.strip()]
 
 
-async def get_thumb(videoid):
-    if os.path.isfile(f"cache/{videoid}.png"):
-        return f"cache/{videoid}.png"
+def fit_text(draw, text, max_width, font_path, start_size, min_size):
+    size = start_size
+    while size >= min_size:
+        font = ImageFont.truetype(font_path, size)
+        if draw.textlength(text, font=font) <= max_width:
+            return font
+        size -= 1
+    return ImageFont.truetype(font_path, min_size)
 
+
+def get_overlay_content_box(overlay_img: Image.Image) -> tuple:
+    alpha = overlay_img.split()[-1]
+    threshold = 20
+    binary = alpha.point(lambda p: 255 if p > threshold else 0)
+    return binary.getbbox()
+
+
+async def get_thumb(videoid: str):
     url = f"https://www.youtube.com/watch?v={videoid}"
+    thumb_path = f"cache/thumb{videoid}.png"
     try:
-        results = VideosSearch(url, limit=1)
-        for result in (await results.next())["result"]:
-            try:
-                title = result["title"]
-                title = re.sub("\W+", " ", title)
-                title = title.title()
-            except:
-                title = "Unsupported Title"
-            try:
-                duration = result["duration"]
-            except:
-                duration = "Unknown Mins"
-            thumbnail = result["thumbnails"][0]["url"].split("?")[0]
-            try:
-                views = result["viewCount"]["short"]
-            except:
-                views = "Unknown Views"
-            try:
-                channel = result["channel"]["name"]
-            except:
-                channel = "Unknown Channel"
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(thumbnail) as resp:
-                if resp.status == 200:
-                    f = await aiofiles.open(f"cache/thumb{videoid}.png", mode="wb")
-                    await f.write(await resp.read())
-                    await f.close()
-
-        youtube = Image.open(f"cache/thumb{videoid}.png")
-        image1 = changeImageSize(1280, 720, youtube)
-        image2 = image1.convert("RGBA")
-        background = image2.filter(filter=ImageFilter.BoxBlur(10))
-        enhancer = ImageEnhance.Brightness(background)
-        background = enhancer.enhance(0.5)
-        draw = ImageDraw.Draw(background)
-        arial = ImageFont.truetype("ShrutixMusic/assets/font2.ttf", 30)
-        font = ImageFont.truetype("ShrutixMusic/assets/font.ttf", 30)
-        draw.text((1110, 8), unidecode(nand.name), fill="white", font=arial)
-        draw.text(
-            (55, 560),
-            f"{channel} | {views[:23]}",
-            (255, 255, 255),
-            font=arial,
-        )
-        draw.text(
-            (57, 600),
-            clear(title),
-            (255, 255, 255),
-            font=font,
-        )
-        draw.line(
-            [(55, 660), (1220, 660)],
-            fill="white",
-            width=5,
-            joint="curve",
-        )
-        draw.ellipse(
-            [(918, 648), (942, 672)],
-            outline="white",
-            fill="white",
-            width=15,
-        )
-        draw.text(
-            (36, 685),
-            "00:00",
-            (255, 255, 255),
-            font=arial,
-        )
-        draw.text(
-            (1185, 685),
-            f"{duration[:23]}",
-            (255, 255, 255),
-            font=arial,
-        )
         try:
-            os.remove(f"cache/thumb{videoid}.png")
+            results = VideosSearch(url, limit=1)
+            result = (await results.next())["result"][0]
+
+            title = re.sub(r"\W+", " ", result.get("title", "Unsupported Title")).title()
+            duration = result.get("duration", "00:00")
+            thumbnail = result["thumbnails"][0]["url"].split("?")[0]
+            views = result.get("viewCount", {}).get("short", "Unknown Views")
+            channel = result.get("channel", {}).get("name", "Unknown Channel")
+        except Exception:
+            title = "Unknown Title"
+            duration = "00:30"
+            thumbnail = YOUTUBE_IMG_URL
+            views = "Views"
+            channel = "Youtube"
+
+        if thumbnail.startswith("http"):
+            async with aiohttp.ClientSession() as session:
+                async with session.get(thumbnail) as resp:
+                    if resp.status == 200:
+                        async with aiofiles.open(thumb_path, mode="wb") as f:
+                            await f.write(await resp.read())
+                    else:
+                        raise RuntimeError("Thumbnail download failed")
+            youtube = Image.open(thumb_path)
+        else:
+            youtube = Image.open(thumbnail)
+
+        image1 = changeImageSize(1280, 720, youtube).convert("RGBA")
+
+        gradient = Image.new("RGBA", image1.size, (0, 0, 0, 255))
+        enhancer = ImageEnhance.Brightness(image1.filter(ImageFilter.GaussianBlur(5)))
+        blurred = enhancer.enhance(0.3)
+        background = Image.alpha_composite(gradient, blurred)
+
+        draw = ImageDraw.Draw(background)
+        font_path_main = "ShrutiMusic/assets/font3.ttf"
+        font_path_small = "ShrutiMusic/assets/font2.ttf"
+
+        player = Image.open("ShrutiMusic/assets/nand.png").convert("RGBA").resize((1280, 720))
+        overlay_box = get_overlay_content_box(player)
+        content_x1, content_y1, content_x2, content_y2 = overlay_box
+        background.paste(player, (0, 0), player)
+
+        box_w = content_x2 - content_x1
+        box_h = content_y2 - content_y1
+
+        thumb_size = int(box_h * 0.66)
+        thumb_margin_x = int(box_w * 0.05)
+        thumb_x = content_x1 + thumb_margin_x
+        thumb_y = content_y1 + (box_h - thumb_size) // 2
+
+        mask = Image.new("L", (thumb_size, thumb_size), 0)
+        draw_mask = ImageDraw.Draw(mask)
+        radius = int(thumb_size * 0.25)
+        draw_mask.rounded_rectangle([(0, 0), (thumb_size, thumb_size)], radius=radius, fill=255)
+
+        thumb_square = youtube.resize((thumb_size, thumb_size))
+        thumb_square.putalpha(mask)
+        background.paste(thumb_square, (thumb_x, thumb_y), thumb_square)
+
+        text_x = thumb_x + thumb_size + int(box_w * 0.05)
+        max_text_width = content_x2 - text_x - int(box_w * 0.05)
+
+        title_y = content_y1 + int(box_h * 0.18)
+        info_y = title_y + int(box_h * 0.22)
+        time_y = content_y2 - int(box_h * 0.24)
+
+        def truncate_text(text, max_chars=30):
+            return (text[: max_chars - 3] + "...") if len(text) > max_chars else text
+
+        short_title = truncate_text(title, max_chars=40)
+        short_channel = truncate_text(channel, max_chars=28)
+
+        title_font = fit_text(draw, short_title, max_text_width, font_path_main, 48, 26)
+        draw.text((text_x, title_y), short_title, (255, 255, 255), font=title_font)
+
+        info_text = f"{short_channel} • {views}"
+        info_font = ImageFont.truetype(font_path_small, 26)
+        draw.text((text_x, info_y), info_text, (215, 215, 215), font=info_font)
+
+        time_font = ImageFont.truetype(font_path_small, 28)
+        duration_text = duration if ":" in duration else f"00:{duration.zfill(2)}"
+        time_display = f"00:30 / {duration_text}"
+        draw.text((text_x, time_y), time_display, (215, 215, 215), font=time_font)
+
+        rocky_font = ImageFont.truetype(font_path_main, 32)
+        rocky_text = "Rocky Music"
+        rocky_w, rocky_h = draw.textsize(rocky_text, font=rocky_font)
+        rocky_x = content_x1 + int(box_w * 0.04)
+        rocky_y = content_y1 + int(box_h * 0.08) - rocky_h // 2
+        draw.text((rocky_x, rocky_y), rocky_text, (255, 255, 255), font=rocky_font)
+
+        watermark_font = ImageFont.truetype(font_path_small, 24)
+        watermark_text = "@mrrockytg"
+        text_size = draw.textsize(watermark_text, font=watermark_font)
+        x = background.width - text_size[0] - 25
+        y = background.height - text_size[1] - 25
+        for dx in (-1, 1):
+            for dy in (-1, 1):
+                draw.text((x + dx, y + dy), watermark_text, font=watermark_font, fill=(0, 0, 0, 180))
+        draw.text((x, y), watermark_text, font=watermark_font, fill=(255, 255, 255, 240))
+
+        try:
+            if os.path.exists(thumb_path):
+                os.remove(thumb_path)
         except:
             pass
-        background.save(f"cache/{videoid}.png")
-        return f"cache/{videoid}.png"
+
+        tpath = f"cache/{videoid}.png"
+        background.save(tpath)
+        return tpath
+
     except Exception as e:
-        print(e)
-        return YOUTUBE_IMG_URL
+        print(f"[get_thumb Error] {e}")
+        traceback.print_exc()
+        return None
