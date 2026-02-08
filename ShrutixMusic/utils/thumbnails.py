@@ -54,12 +54,14 @@ async def get_thumb(videoid, user_id):
     url = f"https://www.youtube.com/watch?v={videoid}"
     try:
         results = VideosSearch(url, limit=1)
-        try:
-            results_data = await results.next()
-            result_items = results_data.get("result", [])
-            if not result_items:
-                raise ValueError("No results found.")
-            data = result_items[0]
+try:
+    results_data = results.next()
+    result_items = results_data.get("result", [])
+    if not result_items:
+        raise ValueError("No results found.")
+    data = result_items[0]
+except Exception:
+    data = {}
             title = re.sub(r"\W+", " ", data.get("title", "Unsupported Title")).title()
             thumbnail = data.get("thumbnails", [{}])[0].get("url", FAILED)
             duration = data.get("duration")
